@@ -1,6 +1,7 @@
 {
     "domain": "aqualink",
     "name": "Jandy iAqualink",
+    "config_flow": true,
     "documentation": "https://github.com/flz/hass-aqualink",
     "dependencies": [],
     "codeowners": ["@flz"],

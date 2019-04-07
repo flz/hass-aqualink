@@ -11,12 +11,11 @@ from homeassistant.const import (
     TEMP_CELSIUS, TEMP_FAHRENHEIT)
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.typing import HomeAssistantType
+from homeassistant.components.sensor import DOMAIN
+
+from .const import DOMAIN as AQUALINK_DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
-
-DEPENDENCIES = ['aqualink']
-
-AQUALINK_DOMAIN = 'aqualink'
 
 PARALLEL_UPDATES = 0
 
@@ -29,7 +28,7 @@ async def async_setup_entry(hass: HomeAssistantType,
                             async_add_entities) -> None:
     """Set up discovered sensors."""
     devs = []
-    for dev in hass.data[AQUALINK_DOMAIN][CONF_SENSORS]:
+    for dev in hass.data[AQUALINK_DOMAIN][DOMAIN]:
         devs.append(HassAqualinkSensor(dev))
     async_add_entities(devs, True)
 

@@ -11,11 +11,9 @@ from homeassistant.const import (
     STATE_ON, STATE_OFF, ATTR_TEMPERATURE, TEMP_CELSIUS, TEMP_FAHRENHEIT)
 from homeassistant.helpers.typing import HomeAssistantType
 
+from .const import DOMAIN as AQUALINK_DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
-
-DEPENDENCIES = ['aqualink']
-
-AQUALINK_DOMAIN = 'aqualink'
 
 PARALLEL_UPDATES = 0
 

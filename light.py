@@ -6,16 +6,13 @@ import time
 from typing import TYPE_CHECKING
 
 from homeassistant.components.light import (
-    ATTR_BRIGHTNESS, ATTR_EFFECT, SUPPORT_BRIGHTNESS, SUPPORT_EFFECT, Light)
+    ATTR_BRIGHTNESS, ATTR_EFFECT, DOMAIN, SUPPORT_BRIGHTNESS, SUPPORT_EFFECT, Light)
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_LIGHTS
 from homeassistant.helpers.typing import HomeAssistantType
 
+from .const import DOMAIN as AQUALINK_DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
-
-DEPENDENCIES = ['aqualink']
-
-AQUALINK_DOMAIN = 'aqualink'
 
 PARALLEL_UPDATES = 0
 
@@ -28,7 +25,7 @@ async def async_setup_entry(hass: HomeAssistantType,
                             async_add_entities) -> None:
     """Set up discovered switches."""
     devs = []
-    for dev in hass.data[AQUALINK_DOMAIN][CONF_LIGHTS]:
+    for dev in hass.data[AQUALINK_DOMAIN][DOMAIN]:
         devs.append(HassAqualinkLight(dev))
     async_add_entities(devs, True)
 
@@ -38,7 +35,7 @@ class HassAqualinkLight(Light):
         Light.__init__(self)
         self.dev = dev
         self._supported_features = None
-     
+
     @property
     def name(self) -> str:
         return self.dev.label
@@ -67,7 +64,7 @@ class HassAqualinkLight(Light):
             await self.dev.set_brightness(pct)
         else:
             await self.dev.turn_on()
-     
+
     async def async_turn_off(self) -> None:
         await self.dev.turn_off()
 
@@ -88,7 +85,7 @@ class HassAqualinkLight(Light):
 
         effects = list(AqualinkLightEffect.__members__.keys())
         return effects
-     
+
     async def async_update(self) -> None:
         if self._supported_features is None:
             self.get_features()
@@ -99,7 +96,7 @@ class HassAqualinkLight(Light):
     @property
     def supported_features(self) -> int:
         return self._supported_features
-            
+
     def get_features(self) -> None:
         self._supported_features = 0
 
