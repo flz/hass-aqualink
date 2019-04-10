@@ -3,7 +3,7 @@ Support for Aqualink temperature sensors.
 """
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
@@ -17,6 +17,8 @@ _LOGGER = logging.getLogger(__name__)
 DEPENDENCIES = ['aqualink']
 
 AQUALINK_DOMAIN = 'aqualink'
+
+PARALLEL_UPDATES = 0
 
 if TYPE_CHECKING:
     from .api import AqualinkSensor
@@ -39,7 +41,7 @@ class HassAqualinkSensor(Entity):
      
     @property
     def name(self) -> str:
-        return self.dev.name
+        return self.dev.label
 
     @property
     def unit_of_measurement(self) -> str:
@@ -47,11 +49,21 @@ class HassAqualinkSensor(Entity):
 
     @property
     def state(self) -> str:
-        return STATE_ON if self.dev.state else STATE_OFF
+        return int(self.dev.state) if self.dev.state else None
     
     @property 
-    def device_class(self) -> str:
-        return DEVICE_CLASS_TEMPERATURE
+    def device_class(self) -> Optional[str]:
+        if self.dev.name.endswith('_temp'):
+            return DEVICE_CLASS_TEMPERATURE
+        return None
+
+    @property
+    def icon(self) -> Optional[str]:
+        if self.dev.name.endswith('_temp'):
+            return 'mdi:thermometer'
+        return None
      
-    def update(self) -> None:
-        self.dev.update()
+    async def async_update(self) -> None:
+        return None
+        # Disable for now since throttling on the API side doesn't work.
+        # await self.dev.system.update()

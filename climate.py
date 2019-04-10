@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, List, Optional
 
 from homeassistant.components.climate import ClimateDevice
 from homeassistant.components.climate.const import (
-    DOMAIN, STATE_HEAT, SUPPORT_TARGET_TEMPERATURE,
+    DOMAIN, STATE_HEAT, STATE_IDLE, SUPPORT_TARGET_TEMPERATURE,
     SUPPORT_OPERATION_MODE)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
@@ -17,9 +17,12 @@ DEPENDENCIES = ['aqualink']
 
 AQUALINK_DOMAIN = 'aqualink'
 
+PARALLEL_UPDATES = 0
+
 if TYPE_CHECKING:
     from .api import (
-        AqualinkSensor, AqualinkSwitch, AqualinkThermostat)
+        AqualinkHeater, AqualinkPump, AqualinkSensor, AqualinkState,
+        AqualinkThermostat)
 
 
 async def async_setup_entry(hass: HomeAssistantType,
@@ -40,11 +43,15 @@ class HassAqualinkThermostat(ClimateDevice):
     @property
     def name(self) -> str:
         """Return the name of the thermostat."""
-        return self.dev.name
+        return self.dev.label.split(' ')[0]
 
-    def update(self) -> None:
+    async def async_update(self) -> None:
         """Get the latest state from the thermostat."""
-        self.dev.update()
+        # Only update if this is the main thermostat.
+        if self.name != 'Pool':
+            return None
+        # ... otherwise, disable since throttling on the API side doesn't work.
+        await self.dev.system.update()
 
     @property
     def supported_features(self) -> int:
@@ -57,24 +64,26 @@ class HassAqualinkThermostat(ClimateDevice):
         return [STATE_HEAT, STATE_OFF]
     
     @property
-    def pump(self) -> 'AqualinkSwitch':
-        pump = self.name.lower().replace(' temp', '_pump')
-        return self.dev.aqualink._devices[pump]
+    def pump(self) -> 'AqualinkPump':
+        pump = self.name.lower() + '_pump'
+        return self.dev.system.devices[pump]
 
     @property
     def current_operation(self) -> str:
-        # Since we don't actually know if it's heating, just assume it's
-        # heating all the time. 
-        if self.heater.state:
+        from .api import AqualinkState
+        state = AqualinkState(self.heater.state)
+        if state == AqualinkState.ON:
             return STATE_HEAT
+        elif state == AqualinkState.ENABLED:
+            return STATE_IDLE
         else:
             return STATE_OFF
 
-    def set_operation_mode(self, operation_mode: str) -> None:
+    async def async_set_operation_mode(self, operation_mode: str) -> None:
         if operation_mode == STATE_HEAT:
-            self.turn_on()
+            await self.async_turn_on()
         elif operation_mode == STATE_OFF:
-            self.turn_off()
+            await self.async_turn_off()
         else:
             _LOGGER.warning(f"Unknown operation mode: {operation_mode}")
 
@@ -93,33 +102,34 @@ class HassAqualinkThermostat(ClimateDevice):
 
     @property
     def target_temperature(self) -> int:
-        return self.dev.state
+        return int(self.dev.state)
 
-    def set_temperature(self, **kwargs) -> None:
+    async def async_set_temperature(self, **kwargs) -> None:
         """Set new target temperature."""
-        self.dev.set_target(int(kwargs[ATTR_TEMPERATURE]))
+        await self.dev.set_temperature(int(kwargs[ATTR_TEMPERATURE]))
 
     @property
     def sensor(self) -> 'AqualinkSensor':
-        sensor = self.name.lower().replace(' ', '_')
-        return self.dev.aqualink._devices[sensor]
+        sensor = self.name.lower() + '_temp'
+        return self.dev.system.devices[sensor]
 
     @property
     def current_temperature(self) -> Optional[int]:
         """Return the current temperature."""
-        return self.sensor.state
+        return int(self.sensor.state) if self.sensor.state else None
 
     @property
-    def heater(self) -> 'AqualinkSwitch':
-        heater = self.name.lower().replace(' temp', '_heater')
-        return self.dev.aqualink._devices[heater]
+    def heater(self) -> 'AqualinkHeater':
+        heater = self.name.lower() + '_heater'
+        return self.dev.system.devices[heater]
 
     @property
     def is_on(self) -> bool:
-        return self.heater.state
+        from .api import AqualinkState
+        return self.heater.is_on
 
-    def turn_on(self) -> None:
-        self.heater.turn_on()
+    async def async_turn_on(self) -> None:
+        await self.heater.turn_on()
 
-    def turn_off(self) -> None:
-        self.heater.turn_off()
+    async def async_turn_off(self) -> None:
+        await self.heater.turn_off()

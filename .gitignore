@@ -1,4 +1,15 @@
+# Python objects
 __pycache__
-.venv-*
+
+# Python virtual environments for development/testing purposes.
+.venv*
+venv*
+
+# Files to do with code coverage.
+tools/
+.coverage
+cov.xml
+
+# Various editor files.
 .vscode
 *.swp

@@ -6,7 +6,7 @@ import time
 from typing import TYPE_CHECKING
 
 from homeassistant.components.light import (
-    ATTR_BRIGHTNESS, SUPPORT_BRIGHTNESS, Light)
+    ATTR_BRIGHTNESS, SUPPORT_BRIGHTNESS, SUPPORT_EFFECT, Light)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LIGHTS
 from homeassistant.helpers.typing import HomeAssistantType
@@ -16,6 +16,8 @@ _LOGGER = logging.getLogger(__name__)
 DEPENDENCIES = ['aqualink']
 
 AQUALINK_DOMAIN = 'aqualink'
+
+PARALLEL_UPDATES = 0
 
 if TYPE_CHECKING:
     from .api import AqualinkLight
@@ -39,29 +41,46 @@ class HassAqualinkLight(Light):
      
     @property
     def name(self) -> str:
-        return self.dev.name
+        return self.dev.label
+
+    @property
+    def icon(self) -> str:
+        return 'mdi:brightness-6'
 
     @property
     def is_on(self) -> bool:
         return self.dev.is_on
 
-    def turn_on(self, **kwargs) -> None:
-        brightness = kwargs.get(ATTR_BRIGHTNESS, 255)
-        # Aqualink supports percentages in 25% increments.
-        pct = int(round(brightness * 4.0 / 255)) * 25
-        self.dev.turn_on(pct)
+    async def async_turn_on(self, **kwargs) -> None:
+        brightness = kwargs.get(ATTR_BRIGHTNESS, None)
+        if brightness:
+            # Aqualink supports percentages in 25% increments.
+            pct = int(round(brightness * 4.0 / 255)) * 25
+            await self.dev.set_brightness(pct)
+        else:
+            await self.dev.turn_on()
      
-    def turn_off(self) -> None:
-        self.dev.turn_off()
+    async def async_turn_off(self) -> None:
+        await self.dev.turn_off()
 
     @property
     def brightness(self) -> int:
         return self.dev.brightness * 255 / 100
+
+    @property
+    def effect(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def effect_list(self) -> list:
+        raise NotImplementedError()
      
-    def update(self) -> None:
+    async def async_update(self) -> None:
         if self._supported_features is None:
             self.get_features()
-        self.dev.update()
+        return None
+        # Disable for now since throttling on the API side doesn't work.
+        # await self.dev.system.update()
 
     @property
     def supported_features(self) -> int:
@@ -70,5 +89,8 @@ class HassAqualinkLight(Light):
     def get_features(self):
         self._supported_features = 0
 
-        if self.dev.is_dimmable:
+        if self.dev.is_dimmer:
             self._supported_features |= SUPPORT_BRIGHTNESS
+
+        if self.dev.is_color:
+            self._supported_features |= SUPPORT_EFFECT

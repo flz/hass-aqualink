@@ -1,230 +1,287 @@
+import aiohttp
+import asyncio
+from enum import Enum, auto, unique
 import logging
 import re
 import sys
 import time
-from typing import Dict, List
+from typing import Dict, List, Optional
 import threading
 import traceback
 
-from requests import Response
-from requests_html import HTMLSession, Element
 
+AQUALINK_API_KEY = 'EOOEMOW4YR6QNB07'
 
-BASE_URL = 'https://mobile.iaqualink.net/'
-ACTION_BASE_URL = BASE_URL + '?actionID=%s'
+AQUALINK_LOGIN_URL = 'https://support.iaqualink.com/users/sign_in.json'
+AQUALINK_DEVICES_URL = 'https://support.iaqualink.com/devices.json'
+AQUALINK_SESSION_URL = 'https://iaqualink-api.realtime.io/v1/mobile/session.json'
 
-MIN_SECS_TO_REFRESH = 20
+AQUALINK_COMMAND_GET_DEVICES = 'get_devices'
+AQUALINK_COMMAND_GET_HOME = 'get_home'
+AQUALINK_COMMAND_GET_ONETOUCH = 'get_onetouch'
+AQUALINK_COMMAND_SET_AUX = 'set_aux'
+AQUALINK_COMMAND_SET_LIGHT = 'set_light'
+AQUALINK_COMMAND_SET_POOL_HEATER = 'set_pool_heater'
+AQUALINK_COMMAND_SET_POOL_PUMP = 'set_pool_pump'
+AQUALINK_COMMAND_SET_SOLAR_HEATER = 'set_solar_heater'
+AQUALINK_COMMAND_SET_SPA_HEATER = 'set_spa_heater'
+AQUALINK_COMMAND_SET_SPA_PUMP = 'set_spa_pump'
+AQUALINK_COMMAND_SET_TEMPS = 'set_temps'
+
+AQUALINK_HTTP_HEADERS = {
+    'User-Agent': 'iAquaLink/70 CFNetwork/901.1 Darwin/17.6.0', 
+    'Content-Type': 'application/json',
+    'Accept': '*/*'
+}
+
+@unique
+class AqualinkState(Enum):
+    OFF = '0'
+    ON = '1'
+    ENABLED = '3'
+
+# XXX - I don't know the exact values per type. The enum is pretty much a
+# placeholder. If you know what type of lights you have and have debugging
+# on, please submit an issue to GitHub with the details so I can update the
+# code.
+@unique
+class AqualinkLightType(Enum):
+    JANDY_LED_WATERCOLORS = auto()
+    JANDY_COLORS = auto()
+    HAYWARD_COLOR_LOGIC = auto()
+    PENTAIR_INTELLIBRITE = auto()
+    PENTAIR_SAM_SAL = auto()
+
+# XXX - These values are probably LightType-specific but they're all I have
+# at the moment. I can see this changing into a color profile system later.
+class AqualinkLightEffect(Enum):
+    NONE = '0'
+    ALPINE_WHITE = '1'
+    SKY_BLUE = '2'
+    COBALT_BLUE = '3'
+    CARIBBEAN_BLUE = '4'
+    SPRING_GREEN = '5'
+    EMERALD_GREEN = '6'
+    EMERALD_ROSE = '7'
+    MAGENTA = '8'
+    VIOLENT = '9'
+    SLOW_COLOR_SPLASH = '10'
+    FAST_COLOR_SPLASH = '11'
+    USA = '12'
+    FAT_TUESDAY = '13'
+    DISCO_TECH = '14'
+ 
+Payload = Dict[str, str]
+                
+MIN_SECS_TO_REFRESH = 10
 
 logger = logging.getLogger('aqualink')
 
-DEVICE_STATE_MAP = {
-    # Those are regular lights...
-    "/files/images/aux_0_0.png": False,
-    "/files/images/aux_0_1.png": True,
-    "/files/images/aux_0_3.png": True,
-    # ... and those are dimmable lights.
-    "/files/images/aux_1_0.png": False,
-    "/files/images/aux_1_1.png": True,
-}      
-
 
 class AqualinkDevice(object):
-    def update(self) -> None:
-        self.aqualink.refresh()
+    def __init__(self, system, data):
+        self.system = system
+        self.data = data
+
+    def __repr__(self) -> str:
+        attrs = ["name", "data"]
+        attrs = ["%s=%r" % (i, getattr(self, i)) for i in attrs]
+        return f'{self.__class__.__name__}({" ".join(attrs)})'
+
+    @property
+    def label(self) -> str:
+        if 'label' in self.data:
+            label = self.data['label']
+            return " ".join([x.capitalize() for x in label.split()])
+        else:
+            label = self.data['name']
+            return " ".join([x.capitalize() for x in label.split('_')])
+
+    @property
+    def state(self) -> str:
+        return self.data['state']
+
+    @property
+    def name(self) -> str:
+        return self.data['name']
+
+    @classmethod
+    def from_data(self, system, data: Dict[str, Dict[str, str]]) -> 'AqualinkDevice':
+        if data['name'].endswith('_heater'):
+            cls = AqualinkHeater
+        elif data['name'].endswith('_set_point'):
+            cls = AqualinkThermostat
+        elif data['name'].endswith('_pump'):
+            cls = AqualinkPump
+        elif data['name'].startswith('aux_'):
+            if data['type'] == '2':
+                cls = AqualinkColorLight
+            elif data['type'] == '1':
+                # XXX - This is a wild guess.
+                cls = AqualinkDimmableLight
+            elif 'LIGHT' in data['label']:
+                cls = AqualinkLightToggle
+            else:
+                cls = AqualinkAuxToggle
+        else:
+            cls = AqualinkSensor
+
+        return cls(system, data)
 
 class AqualinkSensor(AqualinkDevice):
-    def __init__(self,
-                 aqualink: 'Aqualink',
-                 name: str,
-                 entity: str,
-                 state: int):
-        self.name = name
-        self.entity = entity
-        self.state = state
-        self.aqualink = aqualink
-
-    def __repr__(self) -> str:
-        attrs = ["name", "entity", "state"]
-        attrs = ["%s=%r" % (i, getattr(self, i)) for i in attrs]
-        return "AqualinkSensor(%s)" % ", ".join(attrs)
+    pass
 
 
-class AqualinkSwitch(AqualinkDevice):
-    def __init__(self,
-                 aqualink: 'Aqualink',
-                 name: str,
-                 entity: str,
-                 state: str,
-                 action: str):
-        self.name = name
-        self.entity = entity
-        self.state = state
-        self.action = action
-        self.aqualink = aqualink
-
+class AqualinkToggle(AqualinkDevice):
     @property
     def is_on(self) -> bool:
-        return self.state
+        return AqualinkState(self.state) in \
+            [AqualinkState.ON, AqualinkState.ENABLED] if self.state else False
 
-    def turn_on(self) -> None:
+    async def turn_on(self) -> None:
         if not self.is_on:
-            self.toggle()
+            await self.toggle()
 
-    def turn_off(self) -> None:
+    async def turn_off(self) -> None:
         if self.is_on:
-            self.toggle()
+            await self.toggle()
 
-    def toggle(self) -> None:
-        self.aqualink.request(ACTION_BASE_URL % self.action)
-        self.aqualink.refresh(force_refresh=True)
-
-    def __repr__(self) -> str:
-        attrs = ["name", "entity", "state", "action"]
-        attrs = ["%s=%r" % (i, getattr(self, i)) for i in attrs]
-        return "AqualinkSwitch(%s)" % ", ".join(attrs)
+    async def toggle(self) -> None:
+        raise NotImplementedError()
 
 
-class AqualinkLight(AqualinkSwitch):
-    def __init__(self,
-                 aqualink: 'Aqualink',
-                 name: str,
-                 entity: str,
-                 state: str,
-                 action: str,
-                 brightness: int = None):
-        self.name = name
-        self.entity = entity
-        self.state = state
-        self.action = action
-        self.brightness = brightness
-        self.aqualink = aqualink
+class AqualinkPump(AqualinkToggle):
+    async def toggle(self) -> None:
+        await self.system.set_pump(f'set_{self.name}')
+        
+
+class AqualinkHeater(AqualinkToggle):
+    async def toggle(self) -> None:
+        await self.system.set_heater(f'set_{self.name}')
+
+
+class AqualinkAuxToggle(AqualinkToggle):
+    async def toggle(self) -> None:
+        await self.system.set_aux(self.data['aux'])
+
+
+# Using AqualinkLight as a Mixin so we can use isinstance(dev, AqualinkLight).
+class AqualinkLight(object):
+    @property
+    def brightness(self) -> Optional[int]:
+        raise NotImplementedError()
 
     @property
-    def is_dimmable(self) -> bool:
+    def effect(self) -> Optional[str]:
+        raise NotImplementedError()
+
+    @property
+    def is_dimmer(self) -> bool:
         return self.brightness != None
 
-    def set_brightness(self, level: int) -> None:
-        if not self.is_dimmable:
-            msg = f"{self.name} isn't a dimmable light. Can't set brightness."
-            logger.warning(msg)
-            return
+    @property
+    def is_color(self) -> bool:
+        return self.effect != None
 
+
+class AqualinkLightToggle(AqualinkLight, AqualinkAuxToggle):
+    @property
+    def brightness(self) -> Optional[bool]:
+        return None
+
+    @property
+    def effect(self) -> Optional[int]:
+        return None
+
+
+# XXX - This is largely untested since I don't have any of those.
+class AqualinkDimmableLight(AqualinkLight, AqualinkDevice):
+    @property
+    def effect(self) -> Optional[int]:
+        return None
+
+    async def set_brightness(self, brightness: int) -> None:
         # Brightness only works in 25% increments.
-        if level not in [0, 25, 50, 75, 100]:
-            msg = f"{level}% isn't a valid percentage. Only use 25% increments."
+        if brightness not in [0, 25, 50, 75, 100]:
+            msg = f"{brightness}% isn't a valid percentage. Only use 25% increments."
             logger.warning(msg)
             return
 
-        url = ACTION_BASE_URL % self.action + "&level=%d" % level
-        self.aqualink.request(url)
-        self.aqualink.refresh(force_refresh=True)
+        # XXX - Unclear what parameters to send here.
+        # data = {}
+        # await self.system.set_light(data)
 
-    def turn_on(self, level: int = 100) -> None:
-        if self.is_dimmable:
-            self.set_brightness(level)
-        else:
-            AqualinkSwitch.turn_on(self)
+    async def turn_on(self, level: int = 100) -> None:
+        await self.set_brightness(level)
 
-    def turn_off(self) -> None:
-        if self.is_dimmable:
-            self.set_brightness(0)
-        else:
-            AqualinkSwitch.turn_off(self)
+    async def turn_off(self) -> None:
+        await self.set_brightness(0)
 
-    def __repr__(self) -> str:
-        attrs = ["name", "entity", "state", "brightness", "action"]
-        attrs = ["%s=%r" % (i, getattr(self, i)) for i in attrs]
-        return "AqualinkLight(%s)" % ", ".join(attrs)
+
+# XXX - Not implemented as I don't have any of those.
+class AqualinkColorLight(AqualinkLight, AqualinkDevice):
+    pass
 
 
 class AqualinkThermostat(AqualinkDevice):
-    def __init__(self,
-                 aqualink: 'Aqualink',
-                 name: str,
-                 entity: str,
-                 state: str,
-                 action: str):
-        self.aqualink = aqualink
-        self.name = name
-        self.entity = entity
-        self.state = state
-        self.action = action
+    @property
+    def temp(self) -> str:
+        # Spa takes precedence for temp1 if present.
+        if self.name.startswith('pool') and self.system.has_spa:
+            return 'temp2'
+        return 'temp1'
 
-    def set_target(self, target: int) -> None:
-        if target not in range(34, 105):
-            msg = f"{target}F isn't a valid temperature (34-104F)."
+    async def set_temperature(self, temperature: int) -> None:
+        if temperature not in range(34, 105):
+            msg = f"{temperature}F isn't a valid temperature (34-104F)."
             logger.warning(msg)
             return
-
-        url = ACTION_BASE_URL % self.action + '&%s=%s' % (self.entity, target)
-        self.aqualink.request(url)
-        self.aqualink.refresh()
-
-    def __repr__(self) -> None:
-        attrs = ["name", "entity", "state", "action"]
-        attrs = ["%s=%r" % (i, getattr(self, i)) for i in attrs]
-        return "AqualinkThermostat(%s)" % ", ".join(attrs)
+        
+        data = {self.temp: temperature}
+        await self.system.set_temps(data)
 
 
-class Aqualink(object):
-    def __init__(self, username: str, password: str):
-        self.username = username
-        self.password = password
-        self.session = HTMLSession()
-        self.login_link = None
-        self.home_link = None
-        self.home_cache = None
-        self.devices_link = None
-        self.devices_cache = None
-        self._devices = {}
-        self.lock = threading.Lock() 
+class AqualinkSystem(object):
+    def __init__(self,
+                 aqualink: 'Aqualink',
+                 serial: str):
+        self.aqualink = aqualink
+        self.serial = serial
+        self.devices = {}
+        self.has_spa = None
+        self.lock = threading.Lock()
         self.last_refresh = 0
-
-        self.login()
-
-    def request(self, url: str, method: str = 'get', **kwargs) -> Response:
-        r = self.session.request(method, url, **kwargs)
-        if r.status_code == 200:
-            logger.debug(f"<- {r.status_code} {r.reason} - {url}")
+        
+    @property
+    async def info(self) -> Payload:
+        systems = await self.aqualink.get_systems()
+        for x in systems:
+            if x['serial_number'] == self.serial:
+                return x
         else:
-            logger.warning(f"<- {r.status_code} {r.reason} - {url}")
-        return r
+            raise Exception(f"System not found for serial {self.serial}.")
 
-    def login(self) -> None:
-            logger.debug("Getting Aqualink start page...")
-            start = self.request(ACTION_BASE_URL)
-            form = start.html.find('form', first=True)
-            action = form.xpath('//input[@id = "actionID"]', first=True).attrs['value']
-            self.login_link = ACTION_BASE_URL % action
-            logger.debug("Login Link: %s" % self.login_link)
+    async def get_devices(self):
+        if not self.devices:
+            await self.update()
+        return self.devices
 
-            # Make sure our credentials work.
-            self.home_cache = self.request(self.login_link)
-            if len(self.home_cache.html.find("div.temps")) == 0:
-                payload = {'userID': self.username, 'userPassword': self.password}
-                logger.info("Logging in to Aqualink...")
-                self.home_cache = self.request(self.login_link, 'post', data=payload)
-                if len(self.home_cache.html.find("div.temps")) == 0:
-                    self.home_link = None
-                    self.home_cache = None
-                    raise Exception("Check your username and password.")
-                else:
-                    self.home_link = self.home_cache.html.find('li#tabHeader_1', first=True).absolute_links.pop()
-                    logger.debug("Home Link: %s" % self.home_link)
-
-
-    def refresh(self, force_refresh=False) -> None:
+    async def update(self) -> None:
         self.lock.acquire()
 
         # Be nice to Aqualink servers since we rely on polling.
         now = int(time.time())
         delta = now - self.last_refresh
-        if delta < MIN_SECS_TO_REFRESH and not force_refresh:
+        if delta < MIN_SECS_TO_REFRESH:
+            logger.debug(f"Only {delta}s since last refresh.")
             self.lock.release()
             return
 
         try:
-            self._refresh()
+            r1 = await self.aqualink._send_home_screen_request(self.serial)
+            r2 = await self.aqualink._send_devices_screen_request(self.serial)
+            await self._parse_home_response(r1)
+            await self._parse_devices_response(r2)
         except Exception as e:
             logger.error(f"Unhandled exception: {e}")
             for line in traceback.format_exc().split('\n'):
@@ -232,203 +289,222 @@ class Aqualink(object):
         else:
             self.last_refresh = int(time.time())
 
+        # Keep track of the presence of the spa so we know whether temp1 is
+        # for the spa or the pool. This is pretty ugly.
+        if 'spa_set_point' in self.devices:
+            self.has_spa = True
+        else:
+            self.has_spa = False
+
         self.lock.release()
 
+    async def _parse_home_response(self, response: aiohttp.ClientResponse) -> None:
+        data = await response.json()
 
-    def _refresh(self, force_refresh=False) -> None:
-        logger.debug("Refreshing device list...")
+        if data['home_screen'][0]['status'] == 'Offline':
+            logger.warning(f"Status for system {self.serial} is Offline.")
+            return
 
-        if self.home_link is None:
-            self.login()
+        # Make the data a bit flatter.
+        devices = {}
+        for x in data['home_screen'][4:]:
+            name = list(x.keys())[0]
+            state = list(x.values())[0] 
+            attrs = {'name': name, 'state': state}
+            devices.update({name: attrs})
+
+        for k, v in devices.items():
+            if k in self.devices:
+                self.devices[k].data['state'] = v['state']
+            else:
+                self.devices[k] = AqualinkDevice.from_data(self, v)
+
+    async def _parse_devices_response(self, response: aiohttp.ClientResponse) -> None:
+        data = await response.json()
+
+        if data['devices_screen'][0]['status'] == 'Offline':
+            logger.warning(f"Status for system {self.serial} is Offline.")
+            return
+
+        # Make the data a bit flatter.
+        devices = {}
+        for i, x in enumerate(data['devices_screen'][3:], 1):
+            attrs = {'aux': f'{i}', 'name': list(x.keys())[0]}
+            for y in list(x.values())[0]:
+                attrs.update(y)
+            devices.update({f'aux_{i}': attrs})
+
+        for k, v in devices.items():
+            if k in self.devices:
+                self.devices[k].data['state'] = v['state']
+            else:
+                self.devices[k] = AqualinkDevice.from_data(self, v)
+
+    async def set_pump(self, command: str) -> None:
+        r = await self.aqualink.set_pump(self.serial, command)
+        await self._parse_home_response(r)
+
+    async def set_heater(self, command: str) -> None:
+        r = await self.aqualink.set_heater(self.serial, command)
+        await self._parse_home_response(r)
+
+    async def set_temps(self, temps: Payload) -> None:
+        r = await self.aqualink.set_temps(self.serial, temps)
+        await self._parse_home_response(r)
+
+    async def set_aux(self, aux: str) -> None:
+        r = await self.aqualink.set_aux(self.serial, aux)
+        await self._parse_devices_response(r)
+
+    async def set_light(self, data: Payload) -> None:
+        r = await self.aqualink.set_light(self.serial, data)
+        await self._parse_devices_response(r)
+        
+
+class Aqualink(object):
+    def __init__(self,
+                 username: str,
+                 password: str,
+                 session: aiohttp.ClientSession):
+        self.username = username
+        self.password = password
+        self.session = session
+
+        self.session_id = None
+        self.token = None
+        self.user_id = None
+
+        self.lock = threading.Lock() 
+        self.last_refresh = 0
+
+    async def _send_request(self,
+                      url: str,
+                      method: str = 'get',
+                      **kwargs) -> aiohttp.ClientResponse:
+        logger.debug(f'-> {method.upper()} {url} {kwargs}')
+        r = await self.session.request(method,
+                                       url,
+                                       headers=AQUALINK_HTTP_HEADERS,
+                                       **kwargs)
+        if r.status == 200:
+            logger.debug(f"<- {r.status} {r.reason} - {url}")
         else:
-            self.home_cache = self.request(self.home_link)
+            logger.warning(f"<- {r.status} {r.reason} - {url}")
+        return r
 
-        self.devices_link = self.home_cache.html.find('li#tabHeader_3', first=True).absolute_links.pop()
-        logger.debug("Devices Link: %s" % self.devices_link)
+    async def _send_login_request(self) -> aiohttp.ClientResponse:
+        data = {
+            "api_key": AQUALINK_API_KEY,
+            "email": self.username,
+            "password": self.password
+        }
+        return await self._send_request(AQUALINK_LOGIN_URL,
+                                        method='post',
+                                        json=data)
 
-        self.devices_cache = self.request(self.devices_link)
+    async def login(self) -> None:
+        r = await self._send_login_request()
 
-        # Keep track of devices in case they change. This might be overkill and likely to work great.
-        # Probably would be safer to restart the process altogether.
-        previous = set(self._devices.keys())
-        seen = set()
+        if r.status == 200:
+            data = await r.json()
+            self.session_id = data['session_id']
+            self.token = data['authentication_token']
+            self.user_id = data['id']
+        else:
+            raise Exception("Login failed: {r.status} {r.reason}")
 
-        home = self.home_cache.html.find("div#home", first=True)
+    async def _send_systems_request(self) -> aiohttp.ClientResponse:
+        params = {
+            "api_key": AQUALINK_API_KEY,
+            "authentication_token": self.token,
+            "user_id": self.user_id,
+        }
+        params = "&".join(f"{k}={v}" for k, v in params.items())
+        url = f"{AQUALINK_DEVICES_URL}?{params}"
+        return await self._send_request(url)
 
-        elements = home.find("div.top,div.inbetween,script")
+    async def get_systems(self) -> list:
+        r = await self._send_systems_request()
 
-        # Remove the last element that's a script we're not interested in.
-        elements.pop()
+        if r.status == 200:
+            data = await r.json()
+            return data
+        else:
+            raise Exception(f"Unable to retrieve systems list: {r.status} {r.reason}")
 
-        def _parse_temperatures(
-            e: Element,
-            devices: Dict[str, AqualinkDevice]
-        ) -> List[str]:
-            temps = self.home_cache.html.find("div.temps")
-
-            sensors = []
-            for i in temps:
-                name = re.sub(r"(Temp).*$", r"\1", i.text)
-                entity = name.lower().replace(' ', '_')
-                temp = re.sub(r"^.*Temp", "", i.text)
-                if temp == "--":
-                    temp = None
-                else:
-                    temp = int(temp.rstrip("°F"))
-                if entity in devices:
-                    devices[entity].state = temp
-                else:
-                    ss = AqualinkSensor(self, name, entity, temp)
-                    devices[entity] = ss
-                sensors += [entity]
-            return sensors
-
-        def _parse_set_temperatures(
-            e: Element,
-            devices: Dict[str, AqualinkDevice]
-        ) -> List[str]:
-            # First, open the sub-page.
-            sub = self.request(BASE_URL + (e.links.pop()))
-
-            # Then get the action link to set thermostats. Same for all of them.
-            script = sub.html.find('script')[-2]
-            action = re.match(r".*actionID=(\w+)&temp.*", script.text).groups()[0]
-
-            control = sub.html.find('div.set_temp_label')
-
-            thermostats = []
-
-            for c in control:
-                (name, temp) = c.text.split("\n")
-                temp = int(temp.rstrip("°F"))
-                entity = c.find('span')[1].attrs['id']
-                if entity in devices:
-                    devices[entity].state = temp
-                    devices[entity].action = action
-                else:
-                    ts = AqualinkThermostat(self, name, entity, temp, action)
-                    devices[entity] = ts
-                thermostats += [entity]
-
-            return thermostats
+    async def _send_session_request(self,
+                                    serial: str,
+                                    command: str,
+                                    params: Optional[Payload] = None) -> aiohttp.ClientResponse:
+        if not params:
+            params = {}
             
-        # Go through all the elements on the page.
-        for e in elements:
-            if e.tag == 'script':
-                continue
+        params.update({
+            "actionID": "command",
+            "command": command,
+            "serial": serial,
+            "sessionID": self.session_id,
+        })
+        params = "&".join(f"{k}={v}" for k, v in params.items())
+        url = f"{AQUALINK_SESSION_URL}?{params}"
+        return await self._send_request(url)
 
-            if 'top' in e.attrs['class']:
-                # Current Temperatures.
-                seen |= set(_parse_temperatures(e, self._devices))
-                continue
+    async def _send_home_screen_request(self, serial) -> aiohttp.ClientResponse:
+        r = await self._send_session_request(serial, AQUALINK_COMMAND_GET_HOME)
+        return r
 
-            if 'inbetween' in e.attrs['class']:
-                # Set Temperatures for Pool/Spa heaters.
-                # This "Set Temperatures" string seems to be safe to use.
-                if e.text == 'Set Temperatures':
-                    seen |= set(_parse_set_temperatures(e, self._devices))
-                    continue
+    async def _send_devices_screen_request(self, serial) -> aiohttp.ClientResponse:
+        r = await self._send_session_request(serial, AQUALINK_COMMAND_GET_DEVICES)
+        return r
 
-                # At this point, we're pretty sure it's a toggle.
-                # The 'inbetween' element gives us the name/state. The
-                # following 'script' element gives the link to flip it.
-                pass
+    async def set_pump(self,
+                       serial: str,
+                       command: str) -> aiohttp.ClientResponse:
+        r = await self._send_session_request(serial, command)
+        return r
 
+    async def set_heater(self,
+                         serial: str,
+                         command: str) -> aiohttp.ClientResponse:
+        r = await self._send_session_request(serial, command)
+        return r
 
-        # XXX - This code needs to be made more robust, like the devices page.
-        # Now find the switches for pool/spa.
-        # This is a bit convoluted but labels, states and scripts don't live
-        # in the same element so we need to find all of them individually and
-        # put them together.
-        labels = home.find("div.inbetween")
-        states = home.find("div#home", first=True).find("img")
-        scripts = home.find("script")
+    async def set_temps(self,
+                        serial: str,
+                        temps: Payload) -> aiohttp.ClientResponse:
+        r = await self._send_session_request(serial, AQUALINK_COMMAND_SET_TEMPS, temps)
+        return r
 
-        labels.pop(0)
-        states.pop(0)
-        scripts.pop()
+    async def set_aux(self,
+                      serial: str,
+                      aux: str) -> aiohttp.ClientResponse:
+        command = AQUALINK_COMMAND_SET_AUX + '_' + aux.replace('aux_', '')
+        r = await self._send_session_request(serial, command)
+        return r
 
-        for label, state, script in zip(labels, states, scripts):
-            name = label.find('span', first=True).text
-            entity = state.attrs['id'].replace('_state', '')
-            state = DEVICE_STATE_MAP[state.attrs['src']]
-            action = re.match(r".*actionID=(\w+)", script.text).groups()[0]
-
-            if entity in self._devices:
-                self._devices[entity].state = state
-                self._devices[entity].action = action
-            else:
-                sw = AqualinkSwitch(self, name, entity, state, action)
-                self._devices[entity] = sw
-            seen.add(entity)
-
-        # Now go through auxiliary devices. These typically include water
-        # features, pool cleaner, lights, ...
-        # Here again, we look for labels, states and scripts separately and
-        # put them all together.
-        devices = self.devices_cache.html.find('div#devices', first=True)
-
-        objs = []
-        for e in devices.find('div.inbetween,script'):
-            if e.tag == 'div':
-                label = e.find('span.row_label', first=True)
-                name = " ".join([x.capitalize() for x in label.text.split()])
-                entity = label.text.lower().replace(' ', '_')
-                state = e.find('img', first=True)
-                state = DEVICE_STATE_MAP[state.attrs['src']]
-                # Create a Light
-                if len(e.links) > 0:
-                    # Device is a dimmable light.
-                    sub = re.match(r".*actionID=(\w+)", e.links.pop()).groups()[0]
-                    # Browse sub-menu. Find the dimming action url.
-                    sub_cache = self.request(ACTION_BASE_URL % sub)
-                    script = sub_cache.html.find('script')[-1]
-                    cur = sub_cache.html.find('span.button-dimmer-selected', first=True)
-                    cur = int(cur.attrs['id'].split('_')[-1])
-                    action = re.match(r".*actionID=(\w+)&level=0.*", script.text).groups()[0]
-                    sw = AqualinkLight(self, name, entity, state, action, brightness=cur)
-                    objs += [sw]
-            else:
-                action = re.match(r".*actionID=(\w+)", e.text).groups()[0]
-                # This is script with an action for the previous element.
-                # Going to assume that people used sensible names for lights.
-                # At least my installer did.
-                if 'Light' in name:
-                    sw = AqualinkLight(self, name, entity, state, action)
-                else:
-                    sw = AqualinkSwitch(self, name, entity, state, action)
-                objs += [sw]
-
-        for obj in objs:
-            entity = obj.entity
-            if entity in self._devices:
-                self._devices[entity].state = obj.state
-                self._devices[entity].action = obj.action
-                if type(obj) == AqualinkLight and obj.is_dimmable:
-                    self._devices[entity].brightness = obj.brightness
-            else:
-                self._devices[entity] = obj
-            seen.add(entity)
-
-        # Get rid of devices that went away.
-        missing = previous - seen
-        for i in list(missing):
-            del(self._devices[i])
-
-    @property
-    def devices(self) -> List[AqualinkDevice]:
-        return self._devices.values()
+    async def set_light(self,
+                        serial: str,
+                        command: str,
+                        data: Payload) -> aiohttp.ClientResponse:
+        r = await self._send_session_request(serial, AQUALINK_COMMAND_SET_LIGHT, data)
+        return r
 
 
-def main():
+async def main():
     if len(sys.argv) != 3:
         print(f"usage: {sys.argv[0]} <username> <password>")
         sys.exit(1)
 
-    aqualink = Aqualink(username=sys.argv[1], password=sys.argv[2])
-    aqualink.refresh()
-    print(aqualink._devices)
-    return 0
+    session = aiohttp.ClientSession()
+    aqualink = Aqualink(username=sys.argv[1], password=sys.argv[2], session=session)
+    await aqualink.login()
+    data = await aqualink.get_systems()
+    pool = AqualinkSystem(aqualink, data[0]['serial_number'])
+    await pool.update()
+    data = await pool.get_devices()
+    print(data)
+    await session.close()
 
 if __name__ == "__main__":
-    sys.exit(main())
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
