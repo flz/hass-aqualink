@@ -5,10 +5,10 @@ __pycache__
 .venv*
 venv*
 
-# Files to do with code coverage.
-tools/
+# Files to do with code coverage and testing.
 .coverage
-cov.xml
+coverage.xml
+.pytest_cache/
 
 # Various editor files.
 .vscode
