@@ -20,7 +20,7 @@ AQUALINK_DOMAIN = 'aqualink'
 PARALLEL_UPDATES = 0
 
 if TYPE_CHECKING:
-    from .api import (
+    from iaqualink import (
         AqualinkHeater, AqualinkPump, AqualinkSensor, AqualinkState,
         AqualinkThermostat)
 
@@ -70,7 +70,7 @@ class HassAqualinkThermostat(ClimateDevice):
 
     @property
     def current_operation(self) -> str:
-        from .api import AqualinkState
+        from iaqualink import AqualinkState
         state = AqualinkState(self.heater.state)
         if state == AqualinkState.ON:
             return STATE_HEAT
@@ -125,7 +125,7 @@ class HassAqualinkThermostat(ClimateDevice):
 
     @property
     def is_on(self) -> bool:
-        from .api import AqualinkState
+        from iaqualink import AqualinkState
         return self.heater.is_on
 
     async def async_turn_on(self) -> None:

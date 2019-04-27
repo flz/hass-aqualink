@@ -19,7 +19,7 @@ AQUALINK_DOMAIN = 'aqualink'
 PARALLEL_UPDATES = 0
 
 if TYPE_CHECKING:
-    from .api import AqualinkToggle
+    from iaqualink import AqualinkToggle
 
 
 async def async_setup_entry(hass: HomeAssistantType,

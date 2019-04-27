@@ -16,7 +16,7 @@ from homeassistant.helpers.typing import HomeAssistantType
 
 _LOGGER = logging.getLogger(__name__)
 
-REQUIREMENTS = ['aiohttp==3.5.4', 'requests-html==0.10.0']
+REQUIREMENTS = ['iaqualink==0.1.2']
 
 ATTR_CONFIG = 'config'
 CONF_CLIMATES = 'climate'
@@ -55,8 +55,8 @@ async def async_setup(hass: HomeAssistantType,
 async def async_setup_entry(hass: HomeAssistantType,
                             config_entry: ConfigEntry) -> None:
     """Set up Aqualink from a config entry."""
-    from .api import (
-        Aqualink, AqualinkLight, AqualinkSensor, AqualinkSystem,
+    from iaqualink import (
+        AqualinkClient, AqualinkLight, AqualinkSensor, AqualinkSystem,
         AqualinkToggle, AqualinkThermostat)
 
     config_data = hass.data[DOMAIN].get(ATTR_CONFIG)
@@ -75,7 +75,7 @@ async def async_setup_entry(hass: HomeAssistantType,
     # When arriving from configure integrations, we have no config data.
     if config_data is not None:
         session = async_create_clientsession(hass, cookie_jar=CookieJar(unsafe=True))
-        aqualink = Aqualink(username, password, session)
+        aqualink = AqualinkClient(username, password, session)
         try:
             await aqualink.login()
         except Exception as e:
