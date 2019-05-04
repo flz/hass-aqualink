@@ -16,8 +16,10 @@ DEPENDENCIES = ['aqualink']
 
 AQUALINK_DOMAIN = 'aqualink'
 
+PARALLEL_UPDATES = 0
+
 if TYPE_CHECKING:
-    from .api import AqualinkSwitch
+    from iaqualink import AqualinkToggle
 
 
 async def async_setup_entry(hass: HomeAssistantType,
@@ -26,28 +28,41 @@ async def async_setup_entry(hass: HomeAssistantType,
     """Set up discovered switches."""
     devs = []
     for dev in hass.data[AQUALINK_DOMAIN][CONF_SWITCHES]:
-        devs.append(HassAqualinkSwitch(dev))
+        devs.append(HassAqualinkToggle(dev))
     async_add_entities(devs, True)
 
 
-class HassAqualinkSwitch(SwitchDevice):
-    def __init__(self, dev: 'AqualinkSwitch'):
+class HassAqualinkToggle(SwitchDevice):
+    def __init__(self, dev: 'AqualinkToggle'):
         SwitchDevice.__init__(self)
         self.dev = dev
      
     @property
     def name(self) -> str:
-        return self.dev.name
+        return self.dev.label
+
+    @property
+    def icon(self) -> str:
+        if self.name == 'Cleaner':
+            return 'mdi:robot-vacuum'
+        elif self.name == 'Waterfall' or self.name.endswith('Dscnt'):
+            return 'mdi:fountain'
+        elif self.name.endswith('Pump') or self.name.endswith('Blower'):
+            return 'mdi:fan'
+        elif self.name.endswith('Heater'):
+            return 'mdi:radiator'
 
     @property
     def is_on(self) -> bool:
         return self.dev.is_on
 
-    def turn_on(self) -> None:
-        return self.dev.turn_on()
+    async def async_turn_on(self) -> None:
+        await self.dev.turn_on()
      
-    def turn_off(self) -> None:
-        return self.dev.turn_off()
+    async def async_turn_off(self) -> None:
+        await self.dev.turn_off()
      
-    def update(self) -> None:
-        self.dev.update()
+    async def async_update(self) -> None:
+        return None
+        # Disable for now since throttling on the API side doesn't work.
+        # await self.dev.system.update()

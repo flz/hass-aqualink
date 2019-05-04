@@ -1,4 +1,5 @@
 """Component to embed Aqualink devices."""
+from aiohttp import CookieJar
 import logging
 from typing import Any, Dict
 
@@ -9,16 +10,18 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_USERNAME, CONF_PASSWORD, CONF_LIGHTS, \
     CONF_SENSORS, CONF_SWITCHES, CONF_DISCOVERY
 from homeassistant.helpers import config_entry_flow
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.typing import HomeAssistantType
 
 _LOGGER = logging.getLogger(__name__)
 
-REQUIREMENTS = ['requests-html==0.10.0']
+REQUIREMENTS = ['iaqualink==0.2.1']
 
 ATTR_CONFIG = 'config'
 CONF_CLIMATES = 'climate'
 DOMAIN = 'aqualink'
+PARALLEL_UPDATES = 0
 
 CONFIG_SCHEMA = vol.Schema({
     DOMAIN: vol.Schema({
@@ -52,9 +55,9 @@ async def async_setup(hass: HomeAssistantType,
 async def async_setup_entry(hass: HomeAssistantType,
                             config_entry: ConfigEntry) -> None:
     """Set up Aqualink from a config entry."""
-    from .api import (
-        Aqualink, AqualinkSensor, AqualinkSwitch, AqualinkLight,
-        AqualinkThermostat)
+    from iaqualink import (
+        AqualinkClient, AqualinkLight, AqualinkSensor, AqualinkSystem,
+        AqualinkToggle, AqualinkThermostat)
 
     config_data = hass.data[DOMAIN].get(ATTR_CONFIG)
 
@@ -67,18 +70,35 @@ async def async_setup_entry(hass: HomeAssistantType,
     switches = hass.data[DOMAIN][CONF_SWITCHES] = []
     climates = hass.data[DOMAIN][CONF_CLIMATES] = []
 
+    hass.loop.set_debug(True)
+
     # When arriving from configure integrations, we have no config data.
     if config_data is not None:
-        aqualink = Aqualink(username, password)
-        aqualink.refresh()
-        for dev in aqualink.devices:
-            if type(dev) == AqualinkSensor:
+        session = async_create_clientsession(hass, cookie_jar=CookieJar(unsafe=True))
+        aqualink = AqualinkClient(username, password, session)
+        try:
+            await aqualink.login()
+        except Exception as e:
+            _LOGGER.error(f'Exception raised while attempting to login: {e}')
+            return False
+
+        systems = await aqualink.get_systems()
+        systems = list(systems.values())
+        if len(systems) == 0:
+            _LOGGER.error("No systems detected or supported.")
+            return False
+
+        # Only supporting the first system for now.
+        devices = await systems[0].get_devices()
+
+        for dev in devices.values():
+            if isinstance(dev, AqualinkSensor):
                  sensors += [dev]
-            elif type(dev) == AqualinkLight:
+            elif isinstance(dev, AqualinkLight):
                  lights += [dev]
-            elif type(dev) == AqualinkSwitch:
+            elif isinstance(dev, AqualinkToggle):
                  switches += [dev]
-            elif type(dev) == AqualinkThermostat:
+            elif isinstance(dev, AqualinkThermostat):
                  climates += [dev]
 
     forward_setup = hass.config_entries.async_forward_entry_setup
@@ -94,6 +114,8 @@ async def async_setup_entry(hass: HomeAssistantType,
     if climates:
         _LOGGER.debug("Got %s climates: %s", len(climates), climates)
         hass.async_create_task(forward_setup(config_entry, 'climate'))
+
+    return True
 
 
 async def async_unload_entry(hass: HomeAssistantType,
@@ -121,4 +143,4 @@ async def async_unload_entry(hass: HomeAssistantType,
 config_entry_flow.register_discovery_flow(DOMAIN,
                                           'Aqualink',
                                           _async_has_devices,
-                                          config_entries.CONN_CLASS_LOCAL_POLL) # Not really.
+                                          config_entries.CONN_CLASS_CLOUD_POLL) # Not really.

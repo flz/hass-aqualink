@@ -1,0 +1,5 @@
+aiohttp
+asynctest
+homeassistant
+pytest
+voluptuous
