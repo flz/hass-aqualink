@@ -6,7 +6,7 @@ import time
 from typing import TYPE_CHECKING
 
 from homeassistant.components.light import (
-    ATTR_BRIGHTNESS, SUPPORT_BRIGHTNESS, SUPPORT_EFFECT, Light)
+    ATTR_BRIGHTNESS, ATTR_EFFECT, SUPPORT_BRIGHTNESS, SUPPORT_EFFECT, Light)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LIGHTS
 from homeassistant.helpers.typing import HomeAssistantType
@@ -20,7 +20,7 @@ AQUALINK_DOMAIN = 'aqualink'
 PARALLEL_UPDATES = 0
 
 if TYPE_CHECKING:
-    from iaqualink import AqualinkLight
+    from iaqualink import AqualinkLight, AqualinkLightEffect
 
 
 async def async_setup_entry(hass: HomeAssistantType,
@@ -52,8 +52,16 @@ class HassAqualinkLight(Light):
         return self.dev.is_on
 
     async def async_turn_on(self, **kwargs) -> None:
+        from iaqualink import AqualinkLightEffect
+
         brightness = kwargs.get(ATTR_BRIGHTNESS, None)
-        if brightness:
+        effect = kwargs.get(ATTR_EFFECT, None)
+
+        # For now I'm assuming lights support either effects or brightness.
+        if effect:
+            effect = AqualinkLightEffect[effect].value
+            await self.dev.set_effect(effect)
+        elif brightness:
             # Aqualink supports percentages in 25% increments.
             pct = int(round(brightness * 4.0 / 255)) * 25
             await self.dev.set_brightness(pct)
@@ -68,12 +76,18 @@ class HassAqualinkLight(Light):
         return self.dev.brightness * 255 / 100
 
     @property
-    def effect(self) -> int:
-        raise NotImplementedError()
+    def effect(self) -> str:
+        from iaqualink import AqualinkLightEffect
+
+        name = AqualinkLightEffect(self.dev.effect).name
+        return name
 
     @property
     def effect_list(self) -> list:
-        raise NotImplementedError()
+        from iaqualink import AqualinkLightEffect
+
+        effects = list(AqualinkLightEffect.__members__.keys())
+        return effects
      
     async def async_update(self) -> None:
         if self._supported_features is None:
@@ -86,7 +100,7 @@ class HassAqualinkLight(Light):
     def supported_features(self) -> int:
         return self._supported_features
             
-    def get_features(self):
+    def get_features(self) -> None:
         self._supported_features = 0
 
         if self.dev.is_dimmer:
