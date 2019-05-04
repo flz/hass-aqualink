@@ -11,6 +11,8 @@ bash$ git clone https://github.com/flz/hass-aqualink custom_components/aqualink
 
 ## Configuration
 
+### Home Assistant
+
 Edit configuration.yaml and add a section such as:
 
 ```yaml
@@ -18,6 +20,48 @@ aqualink:
   username: your@email.com
   password: yourpassword
 ```
+
+### Lovelace UI
+
+Here's a simple (no-frills) page:
+
+```yaml
+  - badges: []
+    cards:
+      - entity: climate.pool
+        name: Pool
+        step_size: 1
+        type: thermostat
+      - entity: climate.spa
+        name: Spa
+        step_size: 1
+        type: thermostat
+      - entities:
+          - entity: sensor.air_temp
+          - entity: sensor.pool_temp
+          - entity: light.pool_light
+          - entity: switch.pool_pump
+          - entity: switch.cleaner
+          - entity: switch.sheer_dscnt
+          - entity: switch.pool_heater
+          - entity: switch.solar_heater
+        show_header_toggle: false
+        title: Pool
+        type: entities
+      - entities:
+          - sensor.spa_temp
+          - light.spa_light
+          - switch.spa_pump
+          - switch.air_blower
+          - switch.spa_heater
+        show_header_toggle: false
+        title: Spa
+        type: entities
+    icon: 'mdi:swim'
+    panel: false
+    path: pool
+    title: Pool
+  ```
 
 ## Known Limitations
 
