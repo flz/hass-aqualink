@@ -70,8 +70,6 @@ async def async_setup_entry(hass: HomeAssistantType,
     switches = hass.data[DOMAIN][CONF_SWITCHES] = []
     climates = hass.data[DOMAIN][CONF_CLIMATES] = []
 
-    hass.loop.set_debug(True)
-
     # When arriving from configure integrations, we have no config data.
     if config_data is not None:
         session = async_create_clientsession(hass, cookie_jar=CookieJar(unsafe=True))
