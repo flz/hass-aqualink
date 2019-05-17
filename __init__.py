@@ -16,7 +16,7 @@ from homeassistant.helpers.typing import HomeAssistantType
 
 _LOGGER = logging.getLogger(__name__)
 
-REQUIREMENTS = ['iaqualink==0.2.2']
+REQUIREMENTS = ['iaqualink==0.2.3']
 
 ATTR_CONFIG = 'config'
 CONF_CLIMATES = 'climate'

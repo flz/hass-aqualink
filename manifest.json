@@ -4,5 +4,5 @@
     "documentation": "https://github.com/flz/hass-aqualink",
     "dependencies": [],
     "codeowners": ["@flz"],
-    "requirements": ["iaqualink==0.2.1"]
+    "requirements": ["iaqualink==0.2.3"]
   }
