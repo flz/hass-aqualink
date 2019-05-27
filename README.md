@@ -66,10 +66,7 @@ Here's a simple (no-frills) page:
 ## Known Limitations
 
 - The platform only supports a single pool. It wouldn't be a lot of work to fix but it most likely won't be an issue for most people.
-- Dimmable Lights aren't supported due to lack of access/testing.
-- Color Lights are mostly untested at this stage for the same reason as above.
 - Only Pool systems are supported at this time.
-- The platform currently assumes temperatures are Fahrenheit.
 
 ## TODO
 
