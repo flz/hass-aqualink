@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Optional
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     CONF_SENSORS, DEVICE_CLASS_TEMPERATURE, STATE_OFF, STATE_ON,
-    TEMP_FAHRENHEIT)
+    TEMP_CELSIUS, TEMP_FAHRENHEIT)
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.typing import HomeAssistantType
 
@@ -38,20 +38,23 @@ class HassAqualinkSensor(Entity):
     def __init__(self, dev: 'AqualinkSensor'):
         Entity.__init__(self)
         self.dev = dev
-     
+
     @property
     def name(self) -> str:
         return self.dev.label
 
     @property
     def unit_of_measurement(self) -> str:
-        return TEMP_FAHRENHEIT
+        if self.dev.system.temp_unit == "F":
+            return TEMP_FAHRENHEIT
+        else:
+            return TEMP_CELSIUS
 
     @property
     def state(self) -> str:
         return int(self.dev.state) if self.dev.state else None
-    
-    @property 
+
+    @property
     def device_class(self) -> Optional[str]:
         if self.dev.name.endswith('_temp'):
             return DEVICE_CLASS_TEMPERATURE
@@ -62,7 +65,7 @@ class HassAqualinkSensor(Entity):
         if self.dev.name.endswith('_temp'):
             return 'mdi:thermometer'
         return None
-     
+
     async def async_update(self) -> None:
         return None
         # Disable for now since throttling on the API side doesn't work.
