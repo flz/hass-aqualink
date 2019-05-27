@@ -8,7 +8,7 @@ from homeassistant.components.climate.const import (
     SUPPORT_OPERATION_MODE)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    STATE_ON, STATE_OFF, ATTR_TEMPERATURE, TEMP_FAHRENHEIT)
+    STATE_ON, STATE_OFF, ATTR_TEMPERATURE, TEMP_CELSIUS, TEMP_FAHRENHEIT)
 from homeassistant.helpers.typing import HomeAssistantType
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ class HassAqualinkThermostat(ClimateDevice):
     @property
     def operation_list(self) -> List[str]:
         return [STATE_HEAT, STATE_OFF]
-    
+
     @property
     def pump(self) -> 'AqualinkPump':
         pump = self.name.lower() + '_pump'
@@ -90,15 +90,34 @@ class HassAqualinkThermostat(ClimateDevice):
     @property
     def temperature_unit(self) -> str:
         """Return the unit of measurement."""
-        return TEMP_FAHRENHEIT
+        if self.dev.system.temp_unit == "F":
+            return TEMP_FAHRENHEIT
+        else:
+            return TEMP_CELSIUS
 
     @property
     def min_temp(self) -> int:
-        return 34
+        from iaqualink.const import (
+            AQUALINK_TEMP_CELSIUS_LOW,
+            AQUALINK_TEMP_FAHRENHEIT_LOW,
+        )
+
+        if self.temperature_unit == TEMP_FAHRENHEIT:
+            return AQUALINK_TEMP_FAHRENHEIT_LOW
+        else:
+            return AQUALINK_TEMP_CELSIUS_LOW
 
     @property
     def max_temp(self) -> int:
-        return 104
+        from iaqualink.const import (
+            AQUALINK_TEMP_CELSIUS_HIGH,
+            AQUALINK_TEMP_FAHRENHEIT_HIGH,
+        )
+
+        if self.temperature_unit == TEMP_FAHRENHEIT:
+            return AQUALINK_TEMP_FAHRENHEIT_HIGH
+        else:
+            return AQUALINK_TEMP_CELSIUS_HIGH
 
     @property
     def target_temperature(self) -> int:
