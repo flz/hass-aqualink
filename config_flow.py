@@ -51,6 +51,10 @@ class AqualinkFlowHandler(config_entries.ConfigFlow):
 
     async def async_step_import(self, user_input: Optional[ConfigType] = None):
         """Occurs when an entry is setup through config."""
+        entries = self.hass.config_entries.async_entries(DOMAIN)
+        if entries:
+            return self.async_abort(reason='already_setup')
+
         username = user_input[CONF_USERNAME]
 
         return self.async_create_entry(
