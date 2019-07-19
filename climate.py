@@ -4,11 +4,10 @@ from typing import TYPE_CHECKING, List, Optional
 
 from homeassistant.components.climate import ClimateDevice
 from homeassistant.components.climate.const import (
-    DOMAIN, STATE_HEAT, STATE_IDLE, SUPPORT_TARGET_TEMPERATURE,
-    SUPPORT_OPERATION_MODE)
+    DOMAIN, HVAC_MODE_HEAT, HVAC_MODE_OFF, SUPPORT_TARGET_TEMPERATURE)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    STATE_ON, STATE_OFF, ATTR_TEMPERATURE, TEMP_CELSIUS, TEMP_FAHRENHEIT)
+    ATTR_TEMPERATURE, TEMP_CELSIUS, TEMP_FAHRENHEIT)
 from homeassistant.helpers.typing import HomeAssistantType
 
 from .const import DOMAIN as AQUALINK_DOMAIN
@@ -54,12 +53,12 @@ class HassAqualinkThermostat(ClimateDevice):
     @property
     def supported_features(self) -> int:
         """Return the list of supported features."""
-        flags = (SUPPORT_TARGET_TEMPERATURE | SUPPORT_OPERATION_MODE)
+        flags = (SUPPORT_TARGET_TEMPERATURE)
         return flags
 
     @property
-    def operation_list(self) -> List[str]:
-        return [STATE_HEAT, STATE_OFF]
+    def hvac_modes(self) -> List[str]:
+        return [HVAC_MODE_HEAT, HVAC_MODE_OFF]
 
     @property
     def pump(self) -> 'AqualinkPump':
@@ -67,21 +66,19 @@ class HassAqualinkThermostat(ClimateDevice):
         return self.dev.system.devices[pump]
 
     @property
-    def current_operation(self) -> str:
+    def hvac_mode(self) -> str:
         from iaqualink import AqualinkState
         state = AqualinkState(self.heater.state)
         if state == AqualinkState.ON:
-            return STATE_HEAT
-        elif state == AqualinkState.ENABLED:
-            return STATE_IDLE
+            return HVAC_MODE_HEAT
         else:
-            return STATE_OFF
+            return HVAC_MODE_OFF
 
-    async def async_set_operation_mode(self, operation_mode: str) -> None:
-        if operation_mode == STATE_HEAT:
-            await self.async_turn_on()
-        elif operation_mode == STATE_OFF:
-            await self.async_turn_off()
+    async def async_set_hvac_mode(self, hvac_mode: str) -> None:
+        if hvac_mode == HVAC_MODE_HEAT:
+            await self.heater.turn_on()
+        elif hvac_mode == HVAC_MODE_OFF:
+            await self.heater.turn_off()
         else:
             _LOGGER.warning(f"Unknown operation mode: {operation_mode}")
 
@@ -139,14 +136,3 @@ class HassAqualinkThermostat(ClimateDevice):
     def heater(self) -> 'AqualinkHeater':
         heater = self.name.lower() + '_heater'
         return self.dev.system.devices[heater]
-
-    @property
-    def is_on(self) -> bool:
-        from iaqualink import AqualinkState
-        return self.heater.is_on
-
-    async def async_turn_on(self) -> None:
-        await self.heater.turn_on()
-
-    async def async_turn_off(self) -> None:
-        await self.heater.turn_off()
