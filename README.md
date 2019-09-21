@@ -1,5 +1,9 @@
 # Aqualink Component for Home Assistant
 
+## This component is DEPRECATED!
+
+As of Home Assistant 0.99, iAqualink integration is supported out of the box.
+
 ## Installation
 
 Run the following commands from your homeassistant directory:
